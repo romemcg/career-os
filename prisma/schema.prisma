@@ -1,0 +1,231 @@
+// CareerOS database schema.
+// Conventions: UUID primary keys, TIMESTAMPTZ timestamps, snake_case tables and
+// columns, owner_id on every owner-scoped table. Change only via migrations.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ActorType {
+  owner
+  system
+  ai_service
+  background_worker
+
+  @@map("actor_type")
+}
+
+enum FactType {
+  employment
+  education
+  certification
+  skill
+  achievement
+  project
+
+  @@map("fact_type")
+}
+
+enum VerificationStatus {
+  unverified
+  verified
+  rejected
+  superseded
+
+  @@map("verification_status")
+}
+
+enum SourceType {
+  document
+  url
+  reference
+  owner_attestation
+
+  @@map("source_type")
+}
+
+model User {
+  id                 String    @id @default(uuid()) @db.Uuid
+  email              String    @unique
+  passwordHash       String    @map("password_hash")
+  failedLoginCount   Int       @default(0) @map("failed_login_count")
+  lockedUntil        DateTime? @map("locked_until") @db.Timestamptz(6)
+  passwordChangedAt  DateTime  @default(now()) @map("password_changed_at") @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions        Session[]
+  profile         CareerProfile?
+  documents       Document[]
+  factSources     FactSource[]
+  careerFacts     CareerFact[]
+  factRevisions   CareerFactRevision[]
+  auditLogs       AuditLog[]
+  idempotencyKeys IdempotencyKey[]
+
+  @@map("users")
+}
+
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  // SHA-256 of the session token. The raw token only ever lives in the cookie.
+  tokenHash  String    @unique @map("token_hash")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  userAgent  String?   @map("user_agent")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model CareerProfile {
+  id        String   @id @default(uuid()) @db.Uuid
+  // Unique: one active profile per owner.
+  ownerId   String   @unique @map("owner_id") @db.Uuid
+  headline  String   @default("")
+  summary   String   @default("")
+  location  String   @default("")
+  revision  Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@map("career_profiles")
+}
+
+model Document {
+  id           String    @id @default(uuid()) @db.Uuid
+  ownerId      String    @map("owner_id") @db.Uuid
+  storageKey   String    @unique @map("storage_key")
+  originalName String    @map("original_name")
+  mimeType     String    @map("mime_type")
+  sha256       String    @db.Char(64)
+  sizeBytes    Int       @map("size_bytes")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  owner   User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  sources FactSource[]
+
+  @@index([ownerId, createdAt])
+  @@index([ownerId, sha256])
+  @@map("documents")
+}
+
+model FactSource {
+  id         String     @id @default(uuid()) @db.Uuid
+  ownerId    String     @map("owner_id") @db.Uuid
+  sourceType SourceType @map("source_type")
+  title      String
+  documentId String?    @map("document_id") @db.Uuid
+  // URL, citation, or free-text pointer (e.g. "Offer letter, page 2").
+  reference  String     @default("")
+  notes      String     @default("")
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner     User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  document  Document?            @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  facts     CareerFact[]
+  revisions CareerFactRevision[]
+
+  @@index([ownerId, createdAt])
+  @@map("fact_sources")
+}
+
+model CareerFact {
+  id                   String             @id @default(uuid()) @db.Uuid
+  ownerId              String             @map("owner_id") @db.Uuid
+  factType             FactType           @map("fact_type")
+  contentJson          Json               @map("content_json")
+  contentSchemaVersion Int                @default(1) @map("content_schema_version")
+  verificationStatus   VerificationStatus @default(unverified) @map("verification_status")
+  sourceId             String?            @map("source_id") @db.Uuid
+  supersedesFactId     String?            @map("supersedes_fact_id") @db.Uuid
+  rejectionReason      String?            @map("rejection_reason")
+  verifiedAt           DateTime?          @map("verified_at") @db.Timestamptz(6)
+  revision             Int                @default(1)
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner        User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  source       FactSource?          @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  supersedes   CareerFact?          @relation("FactSupersession", fields: [supersedesFactId], references: [id], onDelete: Restrict)
+  supersededBy CareerFact[]         @relation("FactSupersession")
+  revisions    CareerFactRevision[]
+
+  @@index([ownerId, verificationStatus])
+  @@index([ownerId, factType])
+  @@index([ownerId, createdAt, id])
+  @@map("career_facts")
+}
+
+// Immutable snapshot written on every change to a career fact.
+model CareerFactRevision {
+  id                 String             @id @default(uuid()) @db.Uuid
+  factId             String             @map("fact_id") @db.Uuid
+  ownerId            String             @map("owner_id") @db.Uuid
+  revision           Int
+  changeType         String             @map("change_type")
+  contentJson        Json               @map("content_json")
+  verificationStatus VerificationStatus @map("verification_status")
+  sourceId           String?            @map("source_id") @db.Uuid
+  note               String?
+  actorType          ActorType          @map("actor_type")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  fact   CareerFact  @relation(fields: [factId], references: [id], onDelete: Cascade)
+  owner  User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  source FactSource? @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  @@unique([factId, revision])
+  @@index([ownerId])
+  @@map("career_fact_revisions")
+}
+
+model AuditLog {
+  id         String    @id @default(uuid()) @db.Uuid
+  ownerId    String?   @map("owner_id") @db.Uuid
+  actorType  ActorType @map("actor_type")
+  action     String
+  entityType String    @map("entity_type")
+  entityId   String?   @map("entity_id")
+  // Never contains secrets or document contents.
+  metadata   Json      @default("{}")
+  requestId  String?   @map("request_id")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  owner User? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model IdempotencyKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  ownerId        String   @map("owner_id") @db.Uuid
+  key            String
+  operation      String
+  requestHash    String   @map("request_hash") @db.Char(64)
+  responseStatus Int      @map("response_status")
+  responseBody   Json     @map("response_body")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, operation, key])
+  @@map("idempotency_keys")
+}

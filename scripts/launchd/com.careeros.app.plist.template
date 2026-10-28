@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CareerOS per-user LaunchAgent. Not installed automatically.
+  Replace __CAREEROS_DIR__ and __DATA_DIR__, copy to ~/Library/LaunchAgents/,
+  then follow docs/runbooks/operations.md.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.careeros.app</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd "__CAREEROS_DIR__" &amp;&amp; exec pnpm start</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__CAREEROS_DIR__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>PORT</key>
+    <string>3001</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>__DATA_DIR__/logs/careeros.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__DATA_DIR__/logs/careeros.err.log</string>
+</dict>
+</plist>
